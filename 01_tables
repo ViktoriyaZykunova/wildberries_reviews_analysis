@@ -1,0 +1,91 @@
+-- Таблица для продуктов
+CREATE TABLE products (
+    product_id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    has_sizes BOOLEAN NOT NULL DEFAULT FALSE,
+    color VARCHAR(100),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Таблица для пользователей
+CREATE TABLE users (
+    user_id SERIAL PRIMARY KEY,
+    reviewer_name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Таблица для отзывов
+CREATE TABLE reviews (
+    review_id SERIAL PRIMARY KEY,
+    product_id INTEGER NOT NULL REFERENCES products(product_id),
+    user_id INTEGER NOT NULL REFERENCES users(user_id),
+    text TEXT NOT NULL,
+    is_obscene BOOLEAN NOT NULL DEFAULT FALSE,
+    matching_size VARCHAR(10) CHECK (matching_size IN ('ok', 'smaller', 'bigger', NULL)),
+    mark SMALLINT NOT NULL CHECK (mark BETWEEN 1 AND 5),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Таблица для хранения результатов сентиментного анализа
+CREATE TABLE sentiment_analysis (
+    review_id BIGINT UNIQUE,
+    sentiment_score FLOAT NOT NULL CHECK (sentiment_score BETWEEN -1 AND 1),
+    sentiment_label VARCHAR(20) NOT NULL CHECK (
+        sentiment_label IN ('positive', 'neutral', 'negative')
+    ),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (review_id) REFERENCES reviews (review_id)
+);
+
+-- Таблица для хранения результатов анализа по ключевым фразам
+CREATE TABLE key_pharases (
+	phrase_id serial primary key,
+	review_id integer not null references reviews(review_id),
+	phrase varchar(255) not null,
+	relevance float not null check (relevance between 0 and 1),
+	created_at timestamp not null default CURRENT_TIMESTAMP
+);
+
+-- Таблица для хранения эмбенддингов
+CREATE TABLE embeddings (
+    embedding_id SERIAL PRIMARY KEY,
+    review_id INTEGER NOT NULL UNIQUE REFERENCES reviews(review_id) ON DELETE CASCADE,
+    vector VECTOR(384) NOT NULL 
+);
+
+-- Таблица для хранения логов
+CREATE TABLE nlp_logs (
+    log_id SERIAL PRIMARY KEY,
+    review_id INTEGER REFERENCES reviews(review_id) ON DELETE SET NULL,
+    task_type VARCHAR(20) NOT NULL CHECK (task_type IN ('sentiment', 'key_phrases', 'embedding')),
+    status VARCHAR(10) NOT NULL CHECK (status IN ('started', 'completed', 'failed')),
+    message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- Индексы для оптимизации
+CREATE INDEX idx_products_name ON products(name);
+CREATE INDEX idx_reviews_mark ON reviews(mark);
+CREATE INDEX idx_reviews_created ON reviews(created_at);
+CREATE INDEX idx_sentiment_label ON sentiment_analysis(label);
+CREATE INDEX ON embeddings USING ivfflat (vector vector_cosine_ops) 
+WITH (lists = 100);
+
+-- Триггер для автоматического обновления атрибута updated_at в отзывах
+CREATE OR REPLACE FUNCTION update_modified_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_reviews_modtime
+BEFORE UPDATE ON reviews
+FOR EACH ROW
+EXECUTE FUNCTION update_modified_column();
